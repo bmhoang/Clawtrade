@@ -1,0 +1,10 @@
+bin/
+data/
+*.exe
+*.db
+*.enc
+*.chain
+node_modules/
+dist/
+.env
+vault.enc
