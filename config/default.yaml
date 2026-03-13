@@ -1,0 +1,17 @@
+# config/default.yaml
+server:
+  host: "127.0.0.1"
+  port: 9090
+
+database:
+  path: "data/clawtrade.db"
+
+vault:
+  path: "data/vault.enc"
+
+risk:
+  max_risk_per_trade: 0.02
+  max_daily_loss: 0.05
+  max_positions: 5
+  max_leverage: 10
+  default_mode: "paper"
