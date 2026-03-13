@@ -1,0 +1,15 @@
+{
+  "name": "@clawtrade/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "clawtrade-cli": "src/index.ts"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
