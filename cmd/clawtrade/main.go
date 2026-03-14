@@ -345,6 +345,7 @@ func serve() error {
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := api.NewServer(cfg, bus, memStore, auditLog, adapters, riskEngine)
+	srv.SetAgentManager(agentMgr)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

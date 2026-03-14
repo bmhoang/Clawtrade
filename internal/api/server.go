@@ -3,8 +3,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -19,6 +21,7 @@ import (
 	"github.com/clawtrade/clawtrade/internal/memory"
 	"github.com/clawtrade/clawtrade/internal/risk"
 	"github.com/clawtrade/clawtrade/internal/security"
+	"github.com/clawtrade/clawtrade/internal/subagent"
 )
 
 type Server struct {
@@ -29,6 +32,12 @@ type Server struct {
 	memory   *memory.Store
 	audit    *security.AuditLog
 	adapters map[string]adapter.TradingAdapter
+	agentMgr *subagent.AgentManager
+}
+
+// SetAgentManager sets the sub-agent manager for agent status endpoints.
+func (s *Server) SetAgentManager(mgr *subagent.AgentManager) {
+	s.agentMgr = mgr
 }
 
 func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audit *security.AuditLog, adapters map[string]adapter.TradingAdapter, riskEngine *risk.Engine) *Server {
@@ -96,6 +105,10 @@ func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audi
 		r.Get("/balances", s.handleGetBalances)
 		r.Get("/positions", s.handleGetPositions)
 		r.Get("/exchanges", s.handleListExchanges)
+
+		// Sub-agent management
+		r.Get("/agents", s.handleListAgents)
+		r.Get("/agents/events", s.handleAgentEvents)
 	})
 
 	// WebSocket endpoint
@@ -124,4 +137,30 @@ func (s *Server) Start(ctx context.Context, addr string) error {
 
 	fmt.Printf("API server listening on %s\n", addr)
 	return srv.ListenAndServe()
+}
+
+func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
+	if s.agentMgr == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]any{})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.agentMgr.Statuses())
+}
+
+func (s *Server) handleAgentEvents(w http.ResponseWriter, r *http.Request) {
+	if s.agentMgr == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]any{})
+		return
+	}
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.agentMgr.Bus().RecentEvents(limit))
 }
