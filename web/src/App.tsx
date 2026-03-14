@@ -6,10 +6,6 @@ import PositionsTable from './components/PositionsTable'
 import PortfolioSummary from './components/PortfolioSummary'
 import TradingViewChart from './components/TradingViewChart'
 import MarketOverview from './components/MarketOverview'
-// @ts-expect-error reserved for future use
-import ExchangeStatus from './components/ExchangeStatus'
-// @ts-expect-error reserved for future use
-import AgentStatus from './components/AgentStatus'
 import AgentInsights from './components/AgentInsights'
 import RecentTrades from './components/RecentTrades'
 import TradeToast from './components/TradeToast'
