@@ -16,7 +16,20 @@ type Config struct {
 	Risk          RiskConfig          `yaml:"risk"`
 	Exchanges     []ExchangeEntry     `yaml:"exchanges"`
 	Agent         AgentConfig         `yaml:"agent"`
+	MCP           MCPConfig           `yaml:"mcp"`
 	Notifications NotificationsConfig `yaml:"notifications"`
+}
+
+type MCPConfig struct {
+	Servers []MCPServerEntry `yaml:"servers"`
+}
+
+type MCPServerEntry struct {
+	Name    string   `yaml:"name"`
+	Command string   `yaml:"command"`
+	Args    []string `yaml:"args"`
+	Env     []string `yaml:"env,omitempty"`
+	Enabled bool     `yaml:"enabled"`
 }
 
 type ServerConfig struct {

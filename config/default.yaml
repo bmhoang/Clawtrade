@@ -31,6 +31,18 @@ agent:
         primary: ""
         max_tokens: 4096
         temperature: 0.7
+mcp:
+    servers: []
+    # Example MCP server config:
+    # servers:
+    #   - name: news-sentiment
+    #     command: python
+    #     args: [mcp_news_server.py]
+    #     enabled: true
+    #   - name: custom-indicators
+    #     command: node
+    #     args: [indicator-server.js]
+    #     enabled: true
 notifications:
     telegram:
         enabled: false

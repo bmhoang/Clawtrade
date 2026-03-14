@@ -20,6 +20,7 @@ import (
 	"github.com/clawtrade/clawtrade/internal/database"
 	"github.com/clawtrade/clawtrade/internal/engine"
 	"github.com/clawtrade/clawtrade/internal/memory"
+	"github.com/clawtrade/clawtrade/internal/risk"
 	"github.com/clawtrade/clawtrade/internal/security"
 )
 
@@ -198,8 +199,18 @@ func serve() error {
 		}
 	}
 
+	// Initialize risk engine
+	riskEngine := risk.NewEngine(risk.RiskLimits{
+		MaxPositionSizePct:  cfg.Risk.MaxRiskPerTrade * 5, // 10% default
+		MaxTotalExposurePct: 0.50,
+		MaxRiskPerTradePct:  cfg.Risk.MaxRiskPerTrade,
+		MaxOpenPositions:    cfg.Risk.MaxPositions,
+		MaxDailyLossPct:     cfg.Risk.MaxDailyLoss,
+		MaxOrderSize:        10000,
+	})
+
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
-	srv := api.NewServer(cfg, bus, memStore, auditLog, adapters)
+	srv := api.NewServer(cfg, bus, memStore, auditLog, adapters, riskEngine)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

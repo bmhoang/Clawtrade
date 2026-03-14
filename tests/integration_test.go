@@ -41,7 +41,7 @@ func TestFullStack_Integration(t *testing.T) {
 	}
 
 	cfg, _ := config.Load("")
-	srv := api.NewServer(cfg, bus, memStore, auditLog, adapters)
+	srv := api.NewServer(cfg, bus, memStore, auditLog, adapters, nil)
 
 	// Test 1: Health endpoint
 	t.Run("HealthEndpoint", func(t *testing.T) {

@@ -36,8 +36,13 @@ Open **http://localhost:8899** for the web dashboard.
 - **Stocks** — Interactive Brokers gateway
 - **Paper Trading** — Simulated mode for risk-free testing
 
-### AI Agent
-- Natural language trade execution ("buy 0.1 BTC if RSI drops below 30")
+### AI Agent (Tool Use)
+- **Real tool use** — Agent calls tools to fetch live data, not just chat
+- 9 built-in tools: `get_price`, `get_candles`, `analyze_market`, `get_balances`, `get_positions`, `risk_check`, `calculate_position_size`, `place_order`, `cancel_order`
+- Context injection: system prompt includes live balances, positions, risk limits, trade history
+- Agent loop: LLM calls tools → executes → returns results → LLM responds with real data
+- Supports all 6 LLM providers with native tool use (Anthropic, OpenAI, DeepSeek, OpenRouter, Google Gemini, Ollama)
+- **MCP support** — Connect external MCP servers for custom tools (indicators, news, alerts)
 - 5 sub-agents: market scanner, risk manager, portfolio optimizer, news analyst, execution engine
 - 5-layer memory system with learning from past trades
 - Configurable confidence thresholds and confirmation modes
@@ -216,12 +221,21 @@ agent:
     - BTC/USDT
     - ETH/USDT
 
+mcp:
+  servers:
+    - name: news-sentiment
+      command: python
+      args: [mcp_news_server.py]
+      enabled: true
+
 notifications:
   telegram:
     enabled: false
     token: ""
     chat_id: ""
 ```
+
+MCP servers expose custom tools to the AI agent via the [Model Context Protocol](https://modelcontextprotocol.io). Any MCP-compatible server works — the agent discovers tools automatically at startup.
 
 API credentials are encrypted in `data/vault.enc` (AES-256-GCM).
 

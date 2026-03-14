@@ -12,9 +12,12 @@ import (
 	"github.com/go-chi/cors"
 
 	"github.com/clawtrade/clawtrade/internal/adapter"
+	"github.com/clawtrade/clawtrade/internal/agent"
 	"github.com/clawtrade/clawtrade/internal/config"
 	"github.com/clawtrade/clawtrade/internal/engine"
+	"github.com/clawtrade/clawtrade/internal/mcp"
 	"github.com/clawtrade/clawtrade/internal/memory"
+	"github.com/clawtrade/clawtrade/internal/risk"
 	"github.com/clawtrade/clawtrade/internal/security"
 )
 
@@ -28,7 +31,7 @@ type Server struct {
 	adapters map[string]adapter.TradingAdapter
 }
 
-func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audit *security.AuditLog, adapters map[string]adapter.TradingAdapter) *Server {
+func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audit *security.AuditLog, adapters map[string]adapter.TradingAdapter, riskEngine *risk.Engine) *Server {
 	s := &Server{
 		cfg:      cfg,
 		bus:      bus,
@@ -47,7 +50,28 @@ func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audi
 		AllowedHeaders: []string{"Content-Type", "Authorization"},
 	}))
 
-	llm := NewLLMHandler(cfg)
+	ag := agent.New(cfg, adapters, riskEngine, mem)
+
+	// Connect external MCP servers to agent
+	if len(cfg.MCP.Servers) > 0 {
+		mcpManager := mcp.NewClientManager()
+		for _, srv := range cfg.MCP.Servers {
+			if !srv.Enabled {
+				continue
+			}
+			client := mcp.NewClient(srv.Name, srv.Command, srv.Args, srv.Env)
+			if err := mcpManager.Add(client); err != nil {
+				fmt.Printf("MCP server %s: failed to connect: %v\n", srv.Name, err)
+				continue
+			}
+			fmt.Printf("MCP server %s: connected\n", srv.Name)
+		}
+		if mcpManager.ServerCount() > 0 {
+			ag.SetMCPBridge(agent.NewMCPBridge(mcpManager))
+		}
+	}
+
+	llm := NewLLMHandler(ag)
 
 	// WebSocket hub for real-time data
 	hub := NewHub()

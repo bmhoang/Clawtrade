@@ -1,14 +1,22 @@
 import { useState, useRef, useEffect } from 'react'
 
+interface ToolCall {
+  id: string
+  name: string
+  input: Record<string, unknown>
+}
+
 interface Message {
   role: 'user' | 'assistant'
   content: string
   time: string
+  toolsUsed?: ToolCall[]
 }
 
 interface ChatApiResponse {
   content: string
   model: string
+  tools_used?: ToolCall[]
   usage?: { input_tokens: number; output_tokens: number }
   error?: string
 }
@@ -21,12 +29,40 @@ const API_BASE = window.location.port === '5173'
   ? 'http://127.0.0.1:8899'
   : window.location.origin
 
+const TOOL_LABELS: Record<string, string> = {
+  get_price: 'Fetching price',
+  get_candles: 'Loading candles',
+  analyze_market: 'Analyzing market',
+  get_balances: 'Checking balances',
+  get_positions: 'Loading positions',
+  risk_check: 'Running risk check',
+  calculate_position_size: 'Calculating size',
+  place_order: 'Placing order',
+  cancel_order: 'Cancelling order',
+  get_open_orders: 'Loading orders',
+}
+
+function ToolBadges({ tools }: { tools: ToolCall[] }) {
+  if (!tools.length) return null
+  return (
+    <div className="flex flex-wrap gap-1 mt-2 mb-1">
+      {tools.map((t, i) => (
+        <span key={i} className="text-[9px] font-semibold px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-400 border border-indigo-500/10">
+          {TOOL_LABELS[t.name] || t.name}
+          {t.input?.symbol ? ` · ${t.input.symbol}` : ''}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 export default function ChatPanel() {
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'assistant', content: 'Hey! I\'m your AI trading copilot. Ask me about markets, strategies, or risk management.', time: now() },
+    { role: 'assistant', content: 'Hey! I\'m your AI trading agent. I can fetch real prices, analyze markets, check your portfolio, and execute trades. Try "How is BTC doing?" or "Show my positions".', time: now() },
   ])
   const [input, setInput] = useState('')
   const [typing, setTyping] = useState(false)
+  const [typingStatus, setTypingStatus] = useState('Thinking...')
   const [modelLabel, setModelLabel] = useState('AI')
   const [tokenCount, setTokenCount] = useState(0)
   const endRef = useRef<HTMLDivElement>(null)
@@ -41,9 +77,12 @@ export default function ChatPanel() {
     setMessages(p => [...p, userMsg])
     setInput('')
     setTyping(true)
+    setTypingStatus('Thinking...')
+
+    // Show "Using tools..." after a delay (agent is likely calling tools)
+    const toolTimer = setTimeout(() => setTypingStatus('Using tools...'), 2000)
 
     try {
-      // Build chat history (skip the initial greeting)
       const chatHistory = [...messages.slice(1), userMsg]
         .map(m => ({ role: m.role, content: m.content }))
 
@@ -54,6 +93,7 @@ export default function ChatPanel() {
       })
 
       const data: ChatApiResponse = await res.json()
+      clearTimeout(toolTimer)
 
       if (!res.ok || data.error) {
         throw new Error(data.error || `HTTP ${res.status}`)
@@ -70,8 +110,14 @@ export default function ChatPanel() {
       }
 
       setTyping(false)
-      setMessages(p => [...p, { role: 'assistant', content: data.content, time: now() }])
+      setMessages(p => [...p, {
+        role: 'assistant',
+        content: data.content,
+        time: now(),
+        toolsUsed: data.tools_used,
+      }])
     } catch (err: any) {
+      clearTimeout(toolTimer)
       setTyping(false)
       const errorMsg = err.message || 'Failed to connect'
       setMessages(p => [...p, {
@@ -92,10 +138,10 @@ export default function ChatPanel() {
           </div>
         </div>
         <div className="flex-1">
-          <div className="text-[13px] font-semibold text-white">Clawtrade AI</div>
+          <div className="text-[13px] font-semibold text-white">Clawtrade AI Agent</div>
           <div className="flex items-center gap-1.5">
             <div className="w-1.5 h-1.5 rounded-full bg-[#00dc82] pulse-glow" style={{ color: '#00dc82' }} />
-            <span className="text-[10px] text-slate-500">{modelLabel} · Ready</span>
+            <span className="text-[10px] text-slate-500">{modelLabel} · Tool Use Enabled</span>
           </div>
         </div>
         <div className="text-[9px] text-slate-600 bg-white/[0.03] px-2 py-1 rounded-md">
@@ -108,6 +154,9 @@ export default function ChatPanel() {
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} slide-in`}>
             <div className="max-w-[88%]">
+              {m.role === 'assistant' && m.toolsUsed && m.toolsUsed.length > 0 && (
+                <ToolBadges tools={m.toolsUsed} />
+              )}
               <div className={`px-4 py-3 text-[13px] leading-relaxed ${
                 m.role === 'user'
                   ? 'bg-gradient-to-r from-[#4f8fff] to-[#4f8fff]/80 text-white rounded-2xl rounded-br-lg'
@@ -124,10 +173,13 @@ export default function ChatPanel() {
         {typing && (
           <div className="flex justify-start slide-in">
             <div className="bg-white/[0.04] border border-white/[0.06] rounded-2xl rounded-bl-lg px-4 py-3">
-              <div className="flex gap-1.5">
-                {[0, 1, 2].map(i => (
-                  <div key={i} className="w-1.5 h-1.5 rounded-full bg-[#4f8fff]/60 animate-bounce" style={{ animationDelay: `${i * 150}ms` }} />
-                ))}
+              <div className="flex items-center gap-2">
+                <div className="flex gap-1.5">
+                  {[0, 1, 2].map(i => (
+                    <div key={i} className="w-1.5 h-1.5 rounded-full bg-[#4f8fff]/60 animate-bounce" style={{ animationDelay: `${i * 150}ms` }} />
+                  ))}
+                </div>
+                <span className="text-[10px] text-slate-500">{typingStatus}</span>
               </div>
             </div>
           </div>
@@ -143,7 +195,7 @@ export default function ChatPanel() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && send()}
-            placeholder="Ask about markets, strategies..."
+            placeholder="Ask about markets, analyze BTC, check portfolio..."
             className="flex-1 py-2 bg-transparent text-[13px] text-white placeholder-slate-600 outline-none"
           />
           <button
