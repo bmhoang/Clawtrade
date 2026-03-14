@@ -35,11 +35,19 @@ type Server struct {
 	audit    *security.AuditLog
 	adapters map[string]adapter.TradingAdapter
 	agentMgr *subagent.AgentManager
+	ag       *agent.Agent
 }
 
 // SetAgentManager sets the sub-agent manager for agent status endpoints.
 func (s *Server) SetAgentManager(mgr *subagent.AgentManager) {
 	s.agentMgr = mgr
+}
+
+// SetAlertService connects the alert service to the agent's tools.
+func (s *Server) SetAlertService(svc interface{}) {
+	if as, ok := svc.(agent.AlertService); ok {
+		s.ag.SetAlertService(as)
+	}
 }
 
 func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audit *security.AuditLog, adapters map[string]adapter.TradingAdapter, riskEngine *risk.Engine, db *sql.DB) *Server {
@@ -82,6 +90,8 @@ func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audi
 		}
 	}
 
+	s.ag = ag
+
 	llm := NewLLMHandler(ag)
 
 	// WebSocket hub for real-time data
@@ -96,6 +106,7 @@ func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audi
 		"agent.*",     // sub-agent insights
 		"portfolio.*", // portfolio changes
 		"backtest.*",  // backtest progress & results
+		"alert.*",     // alert triggers
 	})
 	s.hub = hub
 

@@ -155,10 +155,13 @@ type DiscordConfig struct {
 }
 
 type AlertsConfig struct {
-	TradeExecuted bool `yaml:"trade_executed"`
-	RiskAlert     bool `yaml:"risk_alert"`
-	PnlUpdate     bool `yaml:"pnl_update"`
-	SystemAlert   bool `yaml:"system_alert"`
+	TradeExecuted    bool `yaml:"trade_executed"`
+	RiskAlert        bool `yaml:"risk_alert"`
+	PnlUpdate        bool `yaml:"pnl_update"`
+	SystemAlert      bool `yaml:"system_alert"`
+	RateLimitMinutes int  `yaml:"rate_limit_minutes"`
+	DailyBriefing    bool `yaml:"daily_briefing"`
+	BriefingHourUTC  int  `yaml:"briefing_hour_utc"`
 }
 
 func defaultConfig() *Config {
@@ -196,10 +199,13 @@ func defaultConfig() *Config {
 		},
 		Notifications: NotificationsConfig{
 			Alerts: AlertsConfig{
-				TradeExecuted: true,
-				RiskAlert:     true,
-				PnlUpdate:     false,
-				SystemAlert:   true,
+				TradeExecuted:    true,
+				RiskAlert:        true,
+				PnlUpdate:        false,
+				SystemAlert:      true,
+				RateLimitMinutes: 5,
+				DailyBriefing:    false,
+				BriefingHourUTC:  8,
 			},
 		},
 	}
@@ -408,6 +414,20 @@ func (c *Config) setNotificationField(channel, field, value string) error {
 			c.Notifications.Alerts.PnlUpdate = value == "true" || value == "1"
 		case "system_alert":
 			c.Notifications.Alerts.SystemAlert = value == "true" || value == "1"
+		case "rate_limit_minutes":
+			v, err := strconv.Atoi(value)
+			if err != nil {
+				return fmt.Errorf("must be an integer: %w", err)
+			}
+			c.Notifications.Alerts.RateLimitMinutes = v
+		case "daily_briefing":
+			c.Notifications.Alerts.DailyBriefing = value == "true" || value == "1"
+		case "briefing_hour_utc":
+			v, err := strconv.Atoi(value)
+			if err != nil {
+				return fmt.Errorf("must be an integer: %w", err)
+			}
+			c.Notifications.Alerts.BriefingHourUTC = v
 		default:
 			return fmt.Errorf("unknown alerts field: %s", field)
 		}

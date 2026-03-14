@@ -17,6 +17,8 @@ import (
 	"github.com/clawtrade/clawtrade/internal"
 	"github.com/clawtrade/clawtrade/internal/adapter"
 	"github.com/clawtrade/clawtrade/internal/adapter/binance"
+	"github.com/clawtrade/clawtrade/internal/alert"
+	"github.com/clawtrade/clawtrade/internal/bot"
 	"github.com/clawtrade/clawtrade/internal/adapter/bybit"
 	"github.com/clawtrade/clawtrade/internal/agent"
 	"github.com/clawtrade/clawtrade/internal/api"
@@ -394,6 +396,34 @@ func serve() error {
 		PollInterval: 30 * time.Second,
 	})
 	go portfolioPoller.Start(ctx)
+
+	// Start alert manager
+	alertStore := alert.NewStore(db)
+	alertMgr := alert.NewManager(alertStore, bus, db, alert.ManagerConfig{
+		RateLimitMinutes: cfg.Notifications.Alerts.RateLimitMinutes,
+	})
+
+	// Set up Telegram dispatcher
+	var tgBot *bot.TelegramBot
+	if cfg.Notifications.Telegram.Enabled && cfg.Notifications.Telegram.Token != "" {
+		tgBot = bot.NewTelegramBot(cfg.Notifications.Telegram.Token)
+		tgBot.RegisterDefaultCommands()
+		chatID := alert.ParseChatID(cfg.Notifications.Telegram.ChatID)
+		if chatID != 0 {
+			tgBot.AllowChat(chatID)
+		}
+		dispatcher := alert.NewDispatcher(tgBot, chatID, bus)
+		alertMgr.OnTrigger(func(a alert.Alert, msg string) {
+			dispatcher.Dispatch(a, msg)
+		})
+		fmt.Println("Alerts: Telegram dispatcher enabled")
+	}
+
+	alertMgr.Start()
+
+	// Set alert service on agent tools
+	alertSvc := alert.NewService(alertMgr)
+	srv.SetAlertService(alertSvc)
 
 	// Listen for sub-agent events and feed insights into the context builder
 	eventTypes := []string{"analysis", "counter_analysis", "narrative", "reflection", "correlation"}
