@@ -90,6 +90,9 @@ func (s *Store) ListEnabled() ([]Alert, error) {
 		}
 		alerts = append(alerts, a)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return alerts, nil
 }
 
@@ -112,6 +115,9 @@ func (s *Store) ListAll() ([]Alert, error) {
 			a.LastTriggeredAt = &lastTriggered.Time
 		}
 		alerts = append(alerts, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return alerts, nil
 }
@@ -158,6 +164,9 @@ func (s *Store) TodayHistory() ([]HistoryEntry, error) {
 			return nil, err
 		}
 		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return entries, nil
 }
