@@ -90,6 +90,9 @@ func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audi
 		"trade.*",
 		"risk.*",
 		"system.*",
+		"price.*",     // live price updates
+		"agent.*",     // sub-agent insights
+		"portfolio.*", // portfolio changes
 	})
 	s.hub = hub
 

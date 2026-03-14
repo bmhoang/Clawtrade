@@ -25,6 +25,7 @@ import (
 	"github.com/clawtrade/clawtrade/internal/memory"
 	"github.com/clawtrade/clawtrade/internal/risk"
 	"github.com/clawtrade/clawtrade/internal/security"
+	"github.com/clawtrade/clawtrade/internal/streaming"
 	"github.com/clawtrade/clawtrade/internal/subagent"
 )
 
@@ -362,6 +363,30 @@ func serve() error {
 	// Start sub-agent manager
 	agentMgr.StartAll(ctx)
 	defer agentMgr.StopAll()
+
+	// Start price streamer
+	priceStreamer := streaming.NewPriceStreamer(streaming.PriceStreamerConfig{
+		Adapters:     adapters,
+		Bus:          bus,
+		Symbols:      cfg.Agent.Watchlist,
+		PollInterval: 2 * time.Second,
+	})
+	go priceStreamer.Start(ctx)
+
+	// Start SubAgent-to-EventBus bridge
+	if agentMgr != nil {
+		bridge := streaming.NewBridge(agentMgr.Bus(), bus)
+		bridge.Start()
+		defer bridge.Stop()
+	}
+
+	// Start portfolio poller
+	portfolioPoller := streaming.NewPortfolioPoller(streaming.PortfolioPollerConfig{
+		Adapters:     adapters,
+		Bus:          bus,
+		PollInterval: 30 * time.Second,
+	})
+	go portfolioPoller.Start(ctx)
 
 	// Listen for sub-agent events and feed insights into the context builder
 	eventTypes := []string{"analysis", "counter_analysis", "narrative", "reflection", "correlation"}
