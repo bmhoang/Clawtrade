@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useWS } from '../hooks/WebSocketProvider'
 import { fetchPrice, type PriceData } from '../api/client'
 
 type AC = 'all' | 'crypto' | 'forex' | 'stocks' | 'index'
@@ -9,6 +10,7 @@ interface MarketItem {
   change: number
   exchange: string
   class: AC
+  live: boolean
 }
 
 const SYMBOLS: { sym: string; exchange: string; class: AC }[] = [
@@ -28,19 +30,19 @@ const SYMBOLS: { sym: string; exchange: string; class: AC }[] = [
 ]
 
 const FALLBACK: MarketItem[] = [
-  { sym: 'BTC/USDT', price: 70245, change: 2.34, exchange: 'Binance', class: 'crypto' },
-  { sym: 'ETH/USDT', price: 3382, change: -1.12, exchange: 'Binance', class: 'crypto' },
-  { sym: 'SOL/USDT', price: 172.3, change: 5.67, exchange: 'Bybit', class: 'crypto' },
-  { sym: 'BNB/USDT', price: 612.4, change: 0.89, exchange: 'Binance', class: 'crypto' },
-  { sym: 'EUR/USD', price: 1.0847, change: -0.12, exchange: 'MT5', class: 'forex' },
-  { sym: 'GBP/JPY', price: 196.42, change: 0.34, exchange: 'MT5', class: 'forex' },
-  { sym: 'XAU/USD', price: 2345, change: 0.89, exchange: 'MT5', class: 'forex' },
-  { sym: 'AAPL', price: 198.52, change: 1.05, exchange: 'IBKR', class: 'stocks' },
-  { sym: 'NVDA', price: 875.3, change: 3.42, exchange: 'IBKR', class: 'stocks' },
-  { sym: 'TSLA', price: 245.6, change: -2.15, exchange: 'IBKR', class: 'stocks' },
-  { sym: 'NQ100', price: 18420, change: 0.67, exchange: 'CME', class: 'index' },
-  { sym: 'SPX', price: 5234, change: 0.42, exchange: 'CME', class: 'index' },
-  { sym: 'VIX', price: 14.8, change: -5.12, exchange: 'CME', class: 'index' },
+  { sym: 'BTC/USDT', price: 70245, change: 2.34, exchange: 'Binance', class: 'crypto', live: false },
+  { sym: 'ETH/USDT', price: 3382, change: -1.12, exchange: 'Binance', class: 'crypto', live: false },
+  { sym: 'SOL/USDT', price: 172.3, change: 5.67, exchange: 'Bybit', class: 'crypto', live: false },
+  { sym: 'BNB/USDT', price: 612.4, change: 0.89, exchange: 'Binance', class: 'crypto', live: false },
+  { sym: 'EUR/USD', price: 1.0847, change: -0.12, exchange: 'MT5', class: 'forex', live: false },
+  { sym: 'GBP/JPY', price: 196.42, change: 0.34, exchange: 'MT5', class: 'forex', live: false },
+  { sym: 'XAU/USD', price: 2345, change: 0.89, exchange: 'MT5', class: 'forex', live: false },
+  { sym: 'AAPL', price: 198.52, change: 1.05, exchange: 'IBKR', class: 'stocks', live: false },
+  { sym: 'NVDA', price: 875.3, change: 3.42, exchange: 'IBKR', class: 'stocks', live: false },
+  { sym: 'TSLA', price: 245.6, change: -2.15, exchange: 'IBKR', class: 'stocks', live: false },
+  { sym: 'NQ100', price: 18420, change: 0.67, exchange: 'CME', class: 'index', live: false },
+  { sym: 'SPX', price: 5234, change: 0.42, exchange: 'CME', class: 'index', live: false },
+  { sym: 'VIX', price: 14.8, change: -5.12, exchange: 'CME', class: 'index', live: false },
 ]
 
 const tabs: { id: AC; label: string }[] = [
@@ -59,10 +61,12 @@ function fmt(p: number, s: string) {
 }
 
 export default function MarketOverview() {
+  const { subscribe } = useWS()
   const [tab, setTab] = useState<AC>('all')
   const [markets, setMarkets] = useState<MarketItem[]>(FALLBACK)
-  const [isLive, setIsLive] = useState(false)
+  const [hasLive, setHasLive] = useState(false)
 
+  // Initial fetch for crypto prices
   useEffect(() => {
     let cancelled = false
     const cryptoSymbols = SYMBOLS.filter(s => s.class === 'crypto')
@@ -71,7 +75,6 @@ export default function MarketOverview() {
     ).then(results => {
       if (cancelled) return
       const updated = [...FALLBACK]
-      let anyLive = false
       results.forEach((r, i) => {
         if (r.status === 'fulfilled') {
           const p = r.value as PriceData
@@ -79,64 +82,81 @@ export default function MarketOverview() {
           if (idx >= 0) {
             const prevPrice = updated[idx].price
             const change = prevPrice > 0 ? ((p.last - prevPrice) / prevPrice * 100) : 0
-            updated[idx] = { ...updated[idx], price: p.last, change: +change.toFixed(2) }
-            anyLive = true
+            updated[idx] = { ...updated[idx], price: p.last, change: +change.toFixed(2), live: true }
+            setHasLive(true)
           }
         }
       })
       setMarkets(updated)
-      if (anyLive) setIsLive(true)
     })
     return () => { cancelled = true }
   }, [])
 
+  // Subscribe to real-time price updates
+  useEffect(() => {
+    return subscribe('price.update', (data) => {
+      const symbol = data.symbol as string
+      const last = data.last as number
+      const changePct = data.change_pct as number
+      if (!symbol || !last) return
+
+      setMarkets(prev => prev.map(m =>
+        m.sym === symbol
+          ? { ...m, price: last, change: +changePct.toFixed(2), live: true }
+          : m
+      ))
+      setHasLive(true)
+    })
+  }, [subscribe])
+
   const filtered = tab === 'all' ? markets : markets.filter(m => m.class === tab)
 
   return (
-    <div className="card fade-in" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, animationDelay: '200ms' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-1)' }}>Markets</span>
-          {isLive && <span style={{ fontSize: 8, fontWeight: 700, padding: '2px 5px', borderRadius: 3, color: '#10b981', background: 'rgba(16,185,129,0.1)' }}>LIVE</span>}
+    <div className="card fade-in flex flex-col h-full min-h-0" style={{ animationDelay: '200ms' }}>
+      <div className="flex items-center justify-between px-5 py-2.5 border-b border-white/[0.06]">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-[var(--text-1)]">Markets</span>
+          {hasLive && (
+            <span className="text-[8px] font-bold px-1.5 py-0.5 rounded text-[#10b981] bg-[rgba(16,185,129,0.1)]">
+              LIVE
+            </span>
+          )}
         </div>
-        <div style={{ display: 'flex', gap: 2 }}>
+        <div className="flex gap-0.5">
           {tabs.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)} style={{
-              padding: '3px 8px', borderRadius: 4, border: 'none', cursor: 'pointer',
-              fontSize: 10, fontWeight: 600,
-              background: tab === t.id ? 'rgba(99,102,241,0.1)' : 'transparent',
-              color: tab === t.id ? '#818cf8' : 'var(--text-3)',
-              transition: 'all 0.15s',
-            }}>{t.label}</button>
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-2 py-1 rounded text-[10px] font-semibold border-none cursor-pointer transition-all ${
+                tab === t.id
+                  ? 'bg-[rgba(99,102,241,0.1)] text-[#818cf8]'
+                  : 'bg-transparent text-[var(--text-3)]'
+              }`}
+            >
+              {t.label}
+            </button>
           ))}
         </div>
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      <div className="flex-1 overflow-auto">
         {filtered.map(m => {
           const up = m.change >= 0
           return (
             <div
               key={m.sym}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '10px 20px', cursor: 'pointer',
-                borderBottom: '1px solid rgba(255,255,255,0.025)',
-                transition: 'background 0.15s',
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              className="flex items-center justify-between px-5 py-2.5 border-b border-white/[0.025] cursor-pointer hover:bg-white/[0.02] transition-colors"
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-1)' }}>{m.sym}</span>
-                <span style={{ fontSize: 9, color: 'var(--text-3)' }}>{m.exchange}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-[var(--text-1)]">{m.sym}</span>
+                <span className="text-[9px] text-[var(--text-3)]">{m.exchange}</span>
+                {m.live && <div className="w-1 h-1 rounded-full bg-[#10b981]" />}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                <span className="mono" style={{ fontSize: 12, color: 'var(--text-1)', fontWeight: 500 }}>{fmt(m.price, m.sym)}</span>
-                <span className="mono" style={{
-                  fontSize: 11, fontWeight: 600, minWidth: 52, textAlign: 'right',
-                  color: up ? '#10b981' : '#ef4444',
-                }}>{up ? '+' : ''}{m.change}%</span>
+              <div className="flex items-center gap-4">
+                <span className="mono text-xs text-[var(--text-1)] font-medium">{fmt(m.price, m.sym)}</span>
+                <span className={`mono text-[11px] font-semibold min-w-[52px] text-right ${up ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
+                  {up ? '+' : ''}{m.change}%
+                </span>
               </div>
             </div>
           )

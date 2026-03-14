@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useWS } from '../hooks/WebSocketProvider'
 import { fetchBalances, fetchPositions, type BalanceData, type PositionData } from '../api/client'
 
 interface StatItem {
@@ -23,7 +24,33 @@ function fmtUsd(n: number): string {
   return `${n >= 0 ? '' : '-'}$${abs.toFixed(2)}`
 }
 
+function buildStats(balances: BalanceData[], positions: PositionData[], totalPnl?: number): StatItem[] {
+  const totalValue = balances.reduce((s, b) => s + b.total, 0)
+  const pnl = totalPnl ?? positions.reduce((s, p) => s + p.pnl, 0)
+  const pnlPct = totalValue > 0 ? (pnl / totalValue * 100) : 0
+
+  return [
+    {
+      label: 'Portfolio Value',
+      value: fmtUsd(totalValue),
+      change: `${balances.length} assets`,
+      pct: totalValue > 0 ? '+0.00%' : '0.00%',
+      up: true,
+    },
+    {
+      label: 'Unrealized P&L',
+      value: `${pnl >= 0 ? '+' : ''}${fmtUsd(pnl)}`,
+      change: `${positions.length} positions`,
+      pct: `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`,
+      up: pnl >= 0,
+    },
+    FALLBACK[2],
+    FALLBACK[3],
+  ]
+}
+
 export default function PortfolioSummary() {
+  const { subscribe } = useWS()
   const [stats, setStats] = useState<StatItem[]>(FALLBACK)
 
   useEffect(() => {
@@ -33,56 +60,44 @@ export default function PortfolioSummary() {
         if (cancelled) return
         const balances: BalanceData[] = balRes.status === 'fulfilled' ? balRes.value : []
         const positions: PositionData[] = posRes.status === 'fulfilled' ? posRes.value : []
-
         if (!balances.length && !positions.length) return
-
-        const totalValue = balances.reduce((s, b) => s + b.total, 0)
-        const totalPnl = positions.reduce((s, p) => s + p.pnl, 0)
-        const pnlPct = totalValue > 0 ? (totalPnl / totalValue * 100) : 0
-
-        const updated: StatItem[] = [
-          {
-            label: 'Portfolio Value',
-            value: fmtUsd(totalValue),
-            change: `${balances.length} assets`,
-            pct: totalValue > 0 ? '+0.00%' : '0.00%',
-            up: true,
-          },
-          {
-            label: 'Unrealized P&L',
-            value: `${totalPnl >= 0 ? '+' : ''}${fmtUsd(totalPnl)}`,
-            change: `${positions.length} positions`,
-            pct: `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`,
-            up: totalPnl >= 0,
-          },
-          FALLBACK[2],
-          FALLBACK[3],
-        ]
-        setStats(updated)
+        setStats(buildStats(balances, positions))
       })
     return () => { cancelled = true }
   }, [])
 
+  useEffect(() => {
+    return subscribe('portfolio.update', (data) => {
+      const balances = (data.balances as BalanceData[]) || []
+      const positions = (data.positions as PositionData[]) || []
+      const totalPnl = data.total_pnl as number | undefined
+      if (balances.length || positions.length) {
+        setStats(buildStats(balances, positions, totalPnl))
+      }
+    })
+  }, [subscribe])
+
   return (
-    <div className="card fade-in" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }}>
+    <div className="card fade-in grid grid-cols-4">
       {stats.map((s, i) => (
-        <div key={s.label} style={{
-          padding: '18px 24px',
-          borderRight: i < stats.length - 1 ? '1px solid var(--border)' : 'none',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <span style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 500 }}>{s.label}</span>
-            <span className="mono" style={{
-              fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 4,
-              color: s.up ? '#10b981' : '#ef4444',
-              background: s.up ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
-            }}>{s.pct}</span>
+        <div
+          key={s.label}
+          className={`px-6 py-4 ${i < stats.length - 1 ? 'border-r border-white/[0.06]' : ''}`}
+        >
+          <div className="flex items-center justify-between mb-2.5">
+            <span className="text-[11px] text-[var(--text-3)] font-medium">{s.label}</span>
+            <span className={`mono text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+              s.up ? 'text-[#10b981] bg-[rgba(16,185,129,0.08)]' : 'text-[#ef4444] bg-[rgba(239,68,68,0.08)]'
+            }`}>
+              {s.pct}
+            </span>
           </div>
-          <div className="mono" style={{
-            fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1,
-            color: s.label.includes('P&L') ? (s.up ? '#10b981' : '#ef4444') : 'var(--text-1)',
-          }}>{s.value}</div>
-          <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 6 }}>{s.change}</div>
+          <div className={`mono text-[22px] font-extrabold tracking-tight leading-none ${
+            s.label.includes('P&L') ? (s.up ? 'text-[#10b981]' : 'text-[#ef4444]') : 'text-[var(--text-1)]'
+          }`}>
+            {s.value}
+          </div>
+          <div className="text-[10px] text-[var(--text-3)] mt-1.5">{s.change}</div>
         </div>
       ))}
     </div>
