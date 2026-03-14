@@ -59,7 +59,7 @@ func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audi
 		AllowedHeaders: []string{"Content-Type", "Authorization"},
 	}))
 
-	ag := agent.New(cfg, adapters, riskEngine, mem)
+	ag := agent.New(cfg, adapters, riskEngine, mem, bus)
 
 	// Connect external MCP servers to agent
 	if len(cfg.MCP.Servers) > 0 {

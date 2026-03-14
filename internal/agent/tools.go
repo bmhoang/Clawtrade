@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/clawtrade/clawtrade/internal/adapter"
+	"github.com/clawtrade/clawtrade/internal/engine"
 	"github.com/clawtrade/clawtrade/internal/risk"
 )
 
@@ -49,13 +50,15 @@ type ToolRegistry struct {
 	adapters   map[string]adapter.TradingAdapter
 	riskEngine *risk.Engine
 	mcpBridge  MCPBridge
+	bus        *engine.EventBus
 }
 
 // NewToolRegistry creates a registry with access to exchange adapters and risk engine.
-func NewToolRegistry(adapters map[string]adapter.TradingAdapter, riskEngine *risk.Engine) *ToolRegistry {
+func NewToolRegistry(adapters map[string]adapter.TradingAdapter, riskEngine *risk.Engine, bus *engine.EventBus) *ToolRegistry {
 	return &ToolRegistry{
 		adapters:   adapters,
 		riskEngine: riskEngine,
+		bus:        bus,
 	}
 }
 
@@ -531,6 +534,23 @@ func (tr *ToolRegistry) execPlaceOrder(ctx context.Context, call ToolCall) ToolR
 	if err != nil {
 		return ToolResult{ID: call.ID, Content: fmt.Sprintf("order failed: %v", err), IsError: true}
 	}
+
+	if tr.bus != nil {
+		tr.bus.Publish(engine.Event{
+			Type: "trade.executed",
+			Data: map[string]any{
+				"symbol":   result.Symbol,
+				"side":     string(result.Side),
+				"size":     result.Size,
+				"price":    result.FilledAt,
+				"type":     string(result.Type),
+				"status":   string(result.Status),
+				"order_id": result.ID,
+				"exchange": result.Exchange,
+			},
+		})
+	}
+
 	data, _ := json.Marshal(result)
 	return ToolResult{ID: call.ID, Content: string(data)}
 }

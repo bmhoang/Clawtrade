@@ -12,6 +12,7 @@ import (
 
 	"github.com/clawtrade/clawtrade/internal/adapter"
 	"github.com/clawtrade/clawtrade/internal/config"
+	"github.com/clawtrade/clawtrade/internal/engine"
 	"github.com/clawtrade/clawtrade/internal/memory"
 	"github.com/clawtrade/clawtrade/internal/risk"
 )
@@ -50,10 +51,10 @@ type Agent struct {
 }
 
 // New creates a new AI trading agent.
-func New(cfg *config.Config, adapters map[string]adapter.TradingAdapter, riskEngine *risk.Engine, mem *memory.Store) *Agent {
+func New(cfg *config.Config, adapters map[string]adapter.TradingAdapter, riskEngine *risk.Engine, mem *memory.Store, bus *engine.EventBus) *Agent {
 	return &Agent{
 		cfg:     cfg,
-		tools:   NewToolRegistry(adapters, riskEngine),
+		tools:   NewToolRegistry(adapters, riskEngine, bus),
 		context: NewContextBuilder(cfg, adapters, riskEngine, mem),
 		memory:  mem,
 	}
