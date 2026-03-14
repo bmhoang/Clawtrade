@@ -16,6 +16,7 @@ import (
 
 	"github.com/clawtrade/clawtrade/internal/adapter"
 	"github.com/clawtrade/clawtrade/internal/agent"
+	"github.com/clawtrade/clawtrade/internal/backtest"
 	"github.com/clawtrade/clawtrade/internal/config"
 	"github.com/clawtrade/clawtrade/internal/engine"
 	"github.com/clawtrade/clawtrade/internal/mcp"
@@ -94,6 +95,7 @@ func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audi
 		"price.*",     // live price updates
 		"agent.*",     // sub-agent insights
 		"portfolio.*", // portfolio changes
+		"backtest.*",  // backtest progress & results
 	})
 	s.hub = hub
 
@@ -109,6 +111,9 @@ func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audi
 		r.Get("/balances", s.handleGetBalances)
 		r.Get("/positions", s.handleGetPositions)
 		r.Get("/exchanges", s.handleListExchanges)
+
+		// Backtesting
+		r.Post("/backtest", s.handleBacktest)
 
 		// Sub-agent management
 		r.Get("/agents", s.handleListAgents)
@@ -151,6 +156,78 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(s.agentMgr.Statuses())
+}
+
+func (s *Server) handleBacktest(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Symbol    string  `json:"symbol"`
+		Timeframe string  `json:"timeframe"`
+		Days      int     `json:"days"`
+		Strategy  string  `json:"strategy"`
+		Capital   float64 `json:"capital"`
+		Exchange  string  `json:"exchange"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Defaults
+	if req.Symbol == "" {
+		req.Symbol = "BTC/USDT"
+	}
+	if req.Timeframe == "" {
+		req.Timeframe = "1d"
+	}
+	if req.Days <= 0 {
+		req.Days = 90
+	}
+	if req.Strategy == "" {
+		req.Strategy = "momentum"
+	}
+	if req.Capital <= 0 {
+		req.Capital = 10000
+	}
+	if req.Exchange == "" {
+		req.Exchange = "binance"
+	}
+
+	adp, ok := s.adapters[req.Exchange]
+	if !ok {
+		http.Error(w, fmt.Sprintf(`{"error":"unknown exchange %q"}`, req.Exchange), http.StatusBadRequest)
+		return
+	}
+
+	loader := backtest.NewDataLoader(nil, adp)
+	now := time.Now().UTC()
+	from := now.AddDate(0, 0, -req.Days)
+	candles, err := loader.LoadCandles(r.Context(), req.Symbol, req.Timeframe, from, now)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"load candles: %s"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	strat := backtest.GetBuiltinStrategy(req.Strategy)
+	if strat == nil {
+		http.Error(w, fmt.Sprintf(`{"error":"unknown strategy %q"}`, req.Strategy), http.StatusBadRequest)
+		return
+	}
+
+	eng := &backtest.Engine{Bus: s.bus}
+	result, err := eng.Run(r.Context(), backtest.BacktestConfig{
+		Symbol:    req.Symbol,
+		Timeframe: req.Timeframe,
+		From:      from,
+		To:        now,
+		Capital:   req.Capital,
+	}, candles, strat)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"backtest run: %s"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
 func (s *Server) handleAgentEvents(w http.ResponseWriter, r *http.Request) {
