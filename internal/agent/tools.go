@@ -428,28 +428,98 @@ func (tr *ToolRegistry) execAnalyzeMarket(ctx context.Context, call ToolCall) To
 }
 
 func (tr *ToolRegistry) execGetBalances(ctx context.Context, call ToolCall) ToolResult {
-	adp, err := tr.getAdapter(call.Input)
-	if err != nil {
-		return ToolResult{ID: call.ID, Content: err.Error(), IsError: true}
+	exchange := getString(call.Input, "exchange", "")
+	if exchange != "" && exchange != "all" {
+		// Single exchange mode
+		adp, err := tr.getAdapter(call.Input)
+		if err != nil {
+			return ToolResult{ID: call.ID, Content: err.Error(), IsError: true}
+		}
+		balances, err := adp.GetBalances(ctx)
+		if err != nil {
+			return ToolResult{ID: call.ID, Content: fmt.Sprintf("failed to get balances: %v", err), IsError: true}
+		}
+		data, _ := json.Marshal(balances)
+		return ToolResult{ID: call.ID, Content: string(data)}
 	}
-	balances, err := adp.GetBalances(ctx)
-	if err != nil {
-		return ToolResult{ID: call.ID, Content: fmt.Sprintf("failed to get balances: %v", err), IsError: true}
+
+	// Multi-exchange aggregation
+	var allBalances []map[string]any
+	var grandTotal float64
+	for name, adp := range tr.adapters {
+		if !adp.IsConnected() {
+			continue
+		}
+		balances, err := adp.GetBalances(ctx)
+		if err != nil {
+			continue
+		}
+		var exchTotal float64
+		for _, b := range balances {
+			exchTotal += b.Total
+			allBalances = append(allBalances, map[string]any{
+				"exchange": name,
+				"asset":    b.Asset,
+				"free":     b.Free,
+				"locked":   b.Locked,
+				"total":    b.Total,
+			})
+		}
+		grandTotal += exchTotal
 	}
-	data, _ := json.Marshal(balances)
+	result := map[string]any{
+		"balances":    allBalances,
+		"grand_total": grandTotal,
+	}
+	data, _ := json.Marshal(result)
 	return ToolResult{ID: call.ID, Content: string(data)}
 }
 
 func (tr *ToolRegistry) execGetPositions(ctx context.Context, call ToolCall) ToolResult {
-	adp, err := tr.getAdapter(call.Input)
-	if err != nil {
-		return ToolResult{ID: call.ID, Content: err.Error(), IsError: true}
+	exchange := getString(call.Input, "exchange", "")
+	if exchange != "" && exchange != "all" {
+		// Single exchange mode
+		adp, err := tr.getAdapter(call.Input)
+		if err != nil {
+			return ToolResult{ID: call.ID, Content: err.Error(), IsError: true}
+		}
+		positions, err := adp.GetPositions(ctx)
+		if err != nil {
+			return ToolResult{ID: call.ID, Content: fmt.Sprintf("failed to get positions: %v", err), IsError: true}
+		}
+		data, _ := json.Marshal(positions)
+		return ToolResult{ID: call.ID, Content: string(data)}
 	}
-	positions, err := adp.GetPositions(ctx)
-	if err != nil {
-		return ToolResult{ID: call.ID, Content: fmt.Sprintf("failed to get positions: %v", err), IsError: true}
+
+	// Multi-exchange aggregation
+	var allPositions []map[string]any
+	var totalPnL float64
+	for name, adp := range tr.adapters {
+		if !adp.IsConnected() {
+			continue
+		}
+		positions, err := adp.GetPositions(ctx)
+		if err != nil {
+			continue
+		}
+		for _, p := range positions {
+			totalPnL += p.PnL
+			allPositions = append(allPositions, map[string]any{
+				"exchange":      name,
+				"symbol":        p.Symbol,
+				"side":          p.Side,
+				"size":          p.Size,
+				"entry_price":   p.EntryPrice,
+				"current_price": p.CurrentPrice,
+				"pnl":           p.PnL,
+			})
+		}
 	}
-	data, _ := json.Marshal(positions)
+	result := map[string]any{
+		"positions": allPositions,
+		"total_pnl": totalPnL,
+	}
+	data, _ := json.Marshal(result)
 	return ToolResult{ID: call.ID, Content: string(data)}
 }
 

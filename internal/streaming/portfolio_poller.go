@@ -55,10 +55,14 @@ func (pp *PortfolioPoller) Start(ctx context.Context) {
 	}
 }
 
-// poll fetches balances and positions from the first connected adapter,
-// computes a hash, and publishes an event if the state has changed.
+// poll fetches balances and positions from ALL connected adapters,
+// aggregates results, and publishes an event if the state has changed.
 func (pp *PortfolioPoller) poll(ctx context.Context) {
-	for _, adp := range pp.config.Adapters {
+	var allBalances []adapter.Balance
+	var allPositions []adapter.Position
+	exchanges := map[string]any{}
+
+	for name, adp := range pp.config.Adapters {
 		if !adp.IsConnected() {
 			continue
 		}
@@ -73,27 +77,44 @@ func (pp *PortfolioPoller) poll(ctx context.Context) {
 			continue
 		}
 
-		hash := pp.hashState(balances, positions)
-		if hash == pp.lastHash {
-			return
-		}
-		pp.lastHash = hash
+		allBalances = append(allBalances, balances...)
+		allPositions = append(allPositions, positions...)
 
-		var totalPnL float64
-		for _, pos := range positions {
-			totalPnL += pos.PnL
+		var exchTotal float64
+		for _, b := range balances {
+			exchTotal += b.Total
 		}
+		exchanges[name] = map[string]any{
+			"total":     exchTotal,
+			"balances":  balances,
+			"positions": positions,
+		}
+	}
 
-		pp.config.Bus.Publish(engine.Event{
-			Type: "portfolio.update",
-			Data: map[string]any{
-				"balances":  balances,
-				"positions": positions,
-				"total_pnl": totalPnL,
-			},
-		})
+	if len(exchanges) == 0 {
 		return
 	}
+
+	hash := pp.hashState(allBalances, allPositions)
+	if hash == pp.lastHash {
+		return
+	}
+	pp.lastHash = hash
+
+	var totalPnL float64
+	for _, pos := range allPositions {
+		totalPnL += pos.PnL
+	}
+
+	pp.config.Bus.Publish(engine.Event{
+		Type: "portfolio.update",
+		Data: map[string]any{
+			"balances":  allBalances,
+			"positions": allPositions,
+			"total_pnl": totalPnL,
+			"exchanges": exchanges,
+		},
+	})
 }
 
 // hashState produces a SHA-256 hex digest of the JSON-serialized balances and

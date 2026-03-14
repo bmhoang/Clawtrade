@@ -156,6 +156,58 @@ func (s *Server) handleGetPositions(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(positions)
 }
 
+// handleGetPortfolio returns aggregated portfolio data across all connected exchanges.
+func (s *Server) handleGetPortfolio(w http.ResponseWriter, r *http.Request) {
+	var allBalances []any
+	var allPositions []any
+	var totalPnL float64
+	exchanges := map[string]any{}
+
+	for name, adp := range s.adapters {
+		if !adp.IsConnected() {
+			continue
+		}
+		balances, err := adp.GetBalances(r.Context())
+		if err != nil {
+			continue
+		}
+		positions, err := adp.GetPositions(r.Context())
+		if err != nil {
+			continue
+		}
+
+		var exchTotal float64
+		for _, b := range balances {
+			allBalances = append(allBalances, b)
+			exchTotal += b.Total
+		}
+		for _, p := range positions {
+			allPositions = append(allPositions, p)
+			totalPnL += p.PnL
+		}
+		exchanges[name] = map[string]any{
+			"total":     exchTotal,
+			"balances":  balances,
+			"positions": positions,
+		}
+	}
+
+	if allBalances == nil {
+		allBalances = []any{}
+	}
+	if allPositions == nil {
+		allPositions = []any{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"balances":  allBalances,
+		"positions": allPositions,
+		"total_pnl": totalPnL,
+		"exchanges": exchanges,
+	})
+}
+
 // handleListExchanges returns the list of configured exchanges.
 func (s *Server) handleListExchanges(w http.ResponseWriter, r *http.Request) {
 	var exchanges []map[string]any

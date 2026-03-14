@@ -104,6 +104,9 @@ func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audi
 		r.Get("/system/version", s.handleVersion)
 		r.Post("/chat", llm.HandleChat)
 
+		// Portfolio (aggregated across all exchanges)
+		r.Get("/portfolio", s.handleGetPortfolio)
+
 		// Exchange data
 		r.Get("/price", s.handleGetPrice)
 		r.Get("/candles", s.handleGetCandles)
