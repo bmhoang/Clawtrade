@@ -41,6 +41,9 @@ const TOOL_LABELS: Record<string, string> = {
   cancel_order: 'Cancelling order',
   get_open_orders: 'Loading orders',
   backtest: 'Running backtest',
+  create_alert: 'Creating alert',
+  list_alerts: 'Listing alerts',
+  delete_alert: 'Deleting alert',
 }
 
 function ToolBadges({ tools }: { tools: ToolCall[] }) {

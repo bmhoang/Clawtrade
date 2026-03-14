@@ -48,6 +48,13 @@ type MCPBridge interface {
 	CallTool(name string, args map[string]any) (string, error)
 }
 
+// AlertService is the interface for managing alerts from agent tools.
+type AlertService interface {
+	CreateAlert(alertType, symbol, condition string, threshold float64, expression, message string, oneShot bool) (int64, error)
+	DeleteAlert(id int64) error
+	ListAlerts() ([]map[string]any, error)
+}
+
 // ToolRegistry manages available tools and their execution.
 type ToolRegistry struct {
 	adapters   map[string]adapter.TradingAdapter
@@ -55,6 +62,7 @@ type ToolRegistry struct {
 	mcpBridge  MCPBridge
 	bus        *engine.EventBus
 	db         *sql.DB
+	alertSvc   AlertService
 }
 
 // NewToolRegistry creates a registry with access to exchange adapters and risk engine.
@@ -70,6 +78,11 @@ func NewToolRegistry(adapters map[string]adapter.TradingAdapter, riskEngine *ris
 // SetMCPBridge sets the MCP client manager for external tool access.
 func (tr *ToolRegistry) SetMCPBridge(bridge MCPBridge) {
 	tr.mcpBridge = bridge
+}
+
+// SetAlertService sets the alert service for alert management tools.
+func (tr *ToolRegistry) SetAlertService(svc AlertService) {
+	tr.alertSvc = svc
 }
 
 // Definitions returns all tool definitions for the LLM.
@@ -217,6 +230,42 @@ func (tr *ToolRegistry) Definitions() []ToolDef {
 				"required": []string{"symbol"},
 			},
 		},
+		{
+			Name:        "create_alert",
+			Description: "Create a new alert. Supports price alerts (above/below threshold), PnL alerts, and custom expression rules (e.g. 'rsi < 30 AND close > sma_50').",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"alert_type": map[string]any{"type": "string", "enum": []string{"price", "pnl", "risk", "trade", "system", "custom"}, "description": "Type of alert"},
+					"symbol":     map[string]any{"type": "string", "description": "Trading pair (e.g. BTC/USDT). Required for price/custom alerts."},
+					"condition":  map[string]any{"type": "string", "enum": []string{"above", "below", "expression"}, "description": "Alert condition", "default": "above"},
+					"threshold":  map[string]any{"type": "number", "description": "Price or PnL threshold value"},
+					"expression": map[string]any{"type": "string", "description": "Custom rule expression (e.g. 'rsi < 30 AND close > sma_50'). Only for custom type."},
+					"message":    map[string]any{"type": "string", "description": "Custom alert message"},
+					"one_shot":   map[string]any{"type": "boolean", "description": "Auto-disable after first trigger (default: false)", "default": false},
+				},
+				"required": []string{"alert_type"},
+			},
+		},
+		{
+			Name:        "list_alerts",
+			Description: "List all active alerts with their status, conditions, and last trigger time.",
+			InputSchema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+		{
+			Name:        "delete_alert",
+			Description: "Delete an alert by its ID.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"id": map[string]any{"type": "integer", "description": "Alert ID to delete"},
+				},
+				"required": []string{"id"},
+			},
+		},
 	}
 
 	// Append MCP tools from external servers
@@ -239,6 +288,7 @@ var builtinTools = map[string]bool{
 	"get_balances": true, "get_positions": true, "risk_check": true,
 	"calculate_position_size": true, "place_order": true,
 	"cancel_order": true, "get_open_orders": true, "backtest": true,
+	"create_alert": true, "list_alerts": true, "delete_alert": true,
 }
 
 // Execute runs a tool and returns the result.
@@ -266,6 +316,12 @@ func (tr *ToolRegistry) Execute(ctx context.Context, call ToolCall) ToolResult {
 		return tr.execGetOpenOrders(ctx, call)
 	case "backtest":
 		return tr.execBacktest(ctx, call)
+	case "create_alert":
+		return tr.execCreateAlert(ctx, call)
+	case "list_alerts":
+		return tr.execListAlerts(ctx, call)
+	case "delete_alert":
+		return tr.execDeleteAlert(ctx, call)
 	default:
 		// Try MCP bridge for external tools
 		if tr.mcpBridge != nil {
@@ -811,6 +867,95 @@ Sharpe Ratio: %.2f`,
 	summary += "\n\n" + string(jsonBytes)
 
 	return ToolResult{ID: call.ID, Content: summary}
+}
+
+// ─── Alert Tool Implementations ──────────────────────────────────────
+
+func (tr *ToolRegistry) execCreateAlert(ctx context.Context, call ToolCall) ToolResult {
+	if tr.alertSvc == nil {
+		return ToolResult{ID: call.ID, Content: "alert service not configured", IsError: true}
+	}
+
+	alertType := getString(call.Input, "alert_type", "price")
+	symbol := getString(call.Input, "symbol", "")
+	condition := getString(call.Input, "condition", "above")
+	threshold := getFloat(call.Input, "threshold", 0)
+	expression := getString(call.Input, "expression", "")
+	message := getString(call.Input, "message", "")
+	oneShot := false
+	if v, ok := call.Input["one_shot"].(bool); ok {
+		oneShot = v
+	}
+
+	if alertType == "custom" {
+		condition = "expression"
+	}
+
+	id, err := tr.alertSvc.CreateAlert(alertType, symbol, condition, threshold, expression, message, oneShot)
+	if err != nil {
+		return ToolResult{ID: call.ID, Content: fmt.Sprintf("failed to create alert: %v", err), IsError: true}
+	}
+
+	result := map[string]any{
+		"id":      id,
+		"type":    alertType,
+		"symbol":  symbol,
+		"status":  "created",
+		"message": fmt.Sprintf("Alert #%d created successfully", id),
+	}
+	data, _ := json.Marshal(result)
+	return ToolResult{ID: call.ID, Content: string(data)}
+}
+
+func (tr *ToolRegistry) execListAlerts(ctx context.Context, call ToolCall) ToolResult {
+	if tr.alertSvc == nil {
+		return ToolResult{ID: call.ID, Content: "alert service not configured", IsError: true}
+	}
+
+	alerts, err := tr.alertSvc.ListAlerts()
+	if err != nil {
+		return ToolResult{ID: call.ID, Content: fmt.Sprintf("failed to list alerts: %v", err), IsError: true}
+	}
+
+	if len(alerts) == 0 {
+		return ToolResult{ID: call.ID, Content: "No active alerts."}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Active Alerts (%d):\n", len(alerts)))
+	for _, a := range alerts {
+		sb.WriteString(fmt.Sprintf("  #%v [%v] %v %v %v",
+			a["id"], a["type"], a["symbol"], a["condition"], a["threshold"]))
+		if expr, ok := a["expression"].(string); ok && expr != "" {
+			sb.WriteString(fmt.Sprintf(" expr=%s", expr))
+		}
+		if msg, ok := a["message"].(string); ok && msg != "" {
+			sb.WriteString(fmt.Sprintf(" — %s", msg))
+		}
+		sb.WriteString("\n")
+	}
+	data, _ := json.Marshal(alerts)
+	sb.WriteString("\n")
+	sb.Write(data)
+
+	return ToolResult{ID: call.ID, Content: sb.String()}
+}
+
+func (tr *ToolRegistry) execDeleteAlert(ctx context.Context, call ToolCall) ToolResult {
+	if tr.alertSvc == nil {
+		return ToolResult{ID: call.ID, Content: "alert service not configured", IsError: true}
+	}
+
+	id := int64(getInt(call.Input, "id", 0))
+	if id == 0 {
+		return ToolResult{ID: call.ID, Content: "alert ID is required", IsError: true}
+	}
+
+	if err := tr.alertSvc.DeleteAlert(id); err != nil {
+		return ToolResult{ID: call.ID, Content: fmt.Sprintf("failed to delete alert: %v", err), IsError: true}
+	}
+
+	return ToolResult{ID: call.ID, Content: fmt.Sprintf(`{"status":"deleted","id":%d}`, id)}
 }
 
 // ─── Technical Analysis Helpers ──────────────────────────────────────

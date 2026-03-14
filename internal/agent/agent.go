@@ -66,6 +66,11 @@ func (a *Agent) SetMCPBridge(bridge MCPBridge) {
 	a.tools.SetMCPBridge(bridge)
 }
 
+// SetAlertService connects the alert service to agent tools.
+func (a *Agent) SetAlertService(svc AlertService) {
+	a.tools.SetAlertService(svc)
+}
+
 // Run executes the agent loop: build context → send to LLM → handle tool calls → repeat.
 func (a *Agent) Run(ctx context.Context, messages []Message) (*Response, error) {
 	provider := a.cfg.Agent.Model.Provider()
