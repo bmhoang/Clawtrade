@@ -49,7 +49,14 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" fill="white" opacity="0.9"/>
+            <path d="M7.5 3C5.5 5.5 5.5 8.5 7 11" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.9"/>
+            <path d="M16.5 3C18.5 5.5 18.5 8.5 17 11" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.9"/>
+            <circle cx="12" cy="8" r="3.2" stroke="white" strokeWidth="1.5" opacity="0.9"/>
+            <path d="M12 6v4" stroke="white" strokeWidth="1" strokeLinecap="round" opacity="0.9"/>
+            <path d="M10.5 7.2c0-.5.7-.9 1.5-.9s1.5.4 1.5.9-.7.8-1.5.8-1.5.4-1.5.9.7.9 1.5.9 1.5-.4 1.5-.9" stroke="white" strokeWidth=".8" strokeLinecap="round" fill="none" opacity="0.9"/>
+            <path d="M7 11c0 3.5 2.2 6.5 5 9 2.8-2.5 5-5.5 5-9" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.9"/>
+            <path d="M9 14.5h6" stroke="white" strokeWidth="1" strokeLinecap="round" opacity="0.5"/>
+            <path d="M10 17h4" stroke="white" strokeWidth="1" strokeLinecap="round" opacity="0.5"/>
           </svg>
         </div>
       </div>

@@ -74,7 +74,7 @@ function DashboardView() {
       <div className="w-[340px] flex flex-col gap-3 shrink-0">
         {/* Chat */}
         <div className="flex-1 min-h-0 card overflow-hidden">
-          <ChatPanel />
+          <ChatPanel compact />
         </div>
 
         {/* Agent Insights */}
