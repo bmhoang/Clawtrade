@@ -1,12 +1,12 @@
 {
   "name": "clawtrade",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AI Trading Agent Platform - Trade Crypto, Forex, Stocks & DeFi with AI agents",
   "license": "MIT",
   "author": "Clawtrade",
   "repository": {
     "type": "git",
-    "url": "https://github.com/clawtrade/clawtrade"
+    "url": "https://github.com/Paparusi/Clawtrade"
   },
   "keywords": [
     "trading",
