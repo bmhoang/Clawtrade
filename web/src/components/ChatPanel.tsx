@@ -40,6 +40,7 @@ const TOOL_LABELS: Record<string, string> = {
   place_order: 'Placing order',
   cancel_order: 'Cancelling order',
   get_open_orders: 'Loading orders',
+  backtest: 'Running backtest',
 }
 
 function ToolBadges({ tools }: { tools: ToolCall[] }) {
