@@ -156,6 +156,35 @@ clawtrade notify set discord.webhook_url <url>
 clawtrade chat                       # Interactive AI chat
 ```
 
+## API Endpoints
+
+### LLM Chat
+```
+POST /api/v1/chat
+Body: { "messages": [{ "role": "user", "content": "How is BTC doing?" }] }
+```
+Proxies to your configured LLM provider (Claude, GPT, Gemini, etc.)
+
+### Market Data
+```
+GET /api/v1/price?symbol=BTC/USDT&exchange=binance
+GET /api/v1/candles?symbol=BTC/USDT&timeframe=1h&limit=100
+GET /api/v1/orderbook?symbol=BTC/USDT&depth=20
+```
+
+### Account
+```
+GET /api/v1/balances?exchange=binance
+GET /api/v1/positions?exchange=binance
+GET /api/v1/exchanges
+```
+
+### WebSocket
+```
+ws://localhost:8899/ws
+```
+Real-time price streaming from connected exchanges. Subscribe to event types: `market.*`, `trade.*`, `risk.*`
+
 ## Configuration
 
 All config stored in `config/default.yaml`:

@@ -14,6 +14,7 @@ import (
 
 	"github.com/clawtrade/clawtrade/internal"
 	"github.com/clawtrade/clawtrade/internal/adapter"
+	"github.com/clawtrade/clawtrade/internal/adapter/binance"
 	"github.com/clawtrade/clawtrade/internal/api"
 	"github.com/clawtrade/clawtrade/internal/config"
 	"github.com/clawtrade/clawtrade/internal/database"
@@ -179,8 +180,26 @@ func serve() error {
 	auditLog := security.NewAuditLog(db)
 	adapters := make(map[string]adapter.TradingAdapter)
 
+	// Initialize configured exchanges
+	for _, ex := range cfg.Exchanges {
+		if !ex.Enabled {
+			continue
+		}
+		switch ex.Name {
+		case "binance":
+			apiKey := ex.Fields["api_key"]
+			apiSecret := ex.Fields["api_secret"]
+			ba := binance.New(apiKey, apiSecret)
+			if ex.Fields["environment"] == "testnet" {
+				ba.SetTestnet(true)
+			}
+			adapters["binance"] = ba
+			fmt.Printf("Exchange: binance loaded\n")
+		}
+	}
+
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
-	srv := api.NewServer(bus, memStore, auditLog, adapters)
+	srv := api.NewServer(cfg, bus, memStore, auditLog, adapters)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -200,6 +219,30 @@ func serve() error {
 
 	if cfg.Notifications.Telegram.Enabled && cfg.Notifications.Telegram.Token != "" {
 		fmt.Println("Telegram: enabled")
+	}
+
+	// Start WebSocket price streaming for configured exchanges
+	for name, adp := range adapters {
+		if ba, ok := adp.(*binance.Adapter); ok {
+			ba.OnPrice(func(price adapter.Price) {
+				bus.Publish(engine.Event{
+					Type: engine.EventPriceUpdate,
+					Data: map[string]any{
+						"symbol":     price.Symbol,
+						"bid":        price.Bid,
+						"ask":        price.Ask,
+						"last":       price.Last,
+						"volume_24h": price.Volume24h,
+						"exchange":   "binance",
+					},
+				})
+			})
+			if err := ba.SubscribePrices(ctx, cfg.Agent.Watchlist); err != nil {
+				fmt.Printf("Warning: %s WebSocket failed: %v\n", name, err)
+			} else {
+				fmt.Printf("WebSocket: %s streaming %d symbols\n", name, len(cfg.Agent.Watchlist))
+			}
+		}
 	}
 
 	if err := srv.Start(ctx, addr); err != nil && err.Error() != "http: Server closed" {

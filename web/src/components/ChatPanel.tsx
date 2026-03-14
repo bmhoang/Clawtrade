@@ -6,9 +6,20 @@ interface Message {
   time: string
 }
 
+interface ChatApiResponse {
+  content: string
+  model: string
+  usage?: { input_tokens: number; output_tokens: number }
+  error?: string
+}
+
 function now() {
   return new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 }
+
+const API_BASE = window.location.port === '5173'
+  ? 'http://127.0.0.1:8899'
+  : window.location.origin
 
 export default function ChatPanel() {
   const [messages, setMessages] = useState<Message[]>([
@@ -16,22 +27,59 @@ export default function ChatPanel() {
   ])
   const [input, setInput] = useState('')
   const [typing, setTyping] = useState(false)
+  const [modelLabel, setModelLabel] = useState('AI')
+  const [tokenCount, setTokenCount] = useState(0)
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, typing])
 
-  const send = () => {
-    if (!input.trim()) return
-    setMessages(p => [...p, { role: 'user', content: input, time: now() }])
-    const q = input
+  const send = async () => {
+    if (!input.trim() || typing) return
+    const userMsg: Message = { role: 'user', content: input, time: now() }
+    setMessages(p => [...p, userMsg])
     setInput('')
     setTyping(true)
-    setTimeout(() => {
+
+    try {
+      // Build chat history (skip the initial greeting)
+      const chatHistory = [...messages.slice(1), userMsg]
+        .map(m => ({ role: m.role, content: m.content }))
+
+      const res = await fetch(`${API_BASE}/api/v1/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: chatHistory }),
+      })
+
+      const data: ChatApiResponse = await res.json()
+
+      if (!res.ok || data.error) {
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
+
+      if (data.model) {
+        const short = data.model.length > 20
+          ? data.model.split(/[/-]/).slice(0, 2).join('-')
+          : data.model
+        setModelLabel(short)
+      }
+      if (data.usage) {
+        setTokenCount(prev => prev + data.usage!.input_tokens + data.usage!.output_tokens)
+      }
+
       setTyping(false)
-      setMessages(p => [...p, { role: 'assistant', content: respond(q), time: now() }])
-    }, 1000 + Math.random() * 800)
+      setMessages(p => [...p, { role: 'assistant', content: data.content, time: now() }])
+    } catch (err: any) {
+      setTyping(false)
+      const errorMsg = err.message || 'Failed to connect'
+      setMessages(p => [...p, {
+        role: 'assistant',
+        content: `Error: ${errorMsg}\n\nMake sure the server is running (\`clawtrade serve\`) and an LLM model is configured (\`clawtrade models setup\`).`,
+        time: now(),
+      }])
+    }
   }
 
   return (
@@ -47,11 +95,11 @@ export default function ChatPanel() {
           <div className="text-[13px] font-semibold text-white">Clawtrade AI</div>
           <div className="flex items-center gap-1.5">
             <div className="w-1.5 h-1.5 rounded-full bg-[#00dc82] pulse-glow" style={{ color: '#00dc82' }} />
-            <span className="text-[10px] text-slate-500">GPT-4 · Ready</span>
+            <span className="text-[10px] text-slate-500">{modelLabel} · Ready</span>
           </div>
         </div>
         <div className="text-[9px] text-slate-600 bg-white/[0.03] px-2 py-1 rounded-md">
-          137 tokens
+          {tokenCount > 0 ? `${tokenCount.toLocaleString()} tokens` : '0 tokens'}
         </div>
       </div>
 
@@ -64,7 +112,7 @@ export default function ChatPanel() {
                 m.role === 'user'
                   ? 'bg-gradient-to-r from-[#4f8fff] to-[#4f8fff]/80 text-white rounded-2xl rounded-br-lg'
                   : 'bg-white/[0.04] border border-white/[0.06] text-slate-200 rounded-2xl rounded-bl-lg'
-              }`}>
+              }`} style={{ whiteSpace: 'pre-wrap' }}>
                 {m.content}
               </div>
               <div className={`text-[9px] text-slate-600 mt-1.5 px-2 ${m.role === 'user' ? 'text-right' : ''}`}>
@@ -100,7 +148,7 @@ export default function ChatPanel() {
           />
           <button
             onClick={send}
-            disabled={!input.trim()}
+            disabled={!input.trim() || typing}
             className="w-8 h-8 rounded-lg bg-[#4f8fff] hover:bg-[#4f8fff]/80 disabled:opacity-20 flex items-center justify-center transition-all shrink-0"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
@@ -111,17 +159,4 @@ export default function ChatPanel() {
       </div>
     </div>
   )
-}
-
-function respond(q: string): string {
-  const l = q.toLowerCase()
-  if (l.includes('btc') || l.includes('bitcoin'))
-    return 'BTC is at $70,200 (+2.48%). RSI(14) at 62 on the 4H — bullish but nearing overbought. Strong support at $68.5k with heavy bid wall. Your long is in profit — consider trailing stop at $69,200 to lock gains.'
-  if (l.includes('eth'))
-    return 'ETH at $3,380 (-2.03%). MACD showing bearish divergence on daily. Support at $3,300. Your ETH long is -$84 underwater. If $3,300 breaks, consider cutting losses. R:R isn\'t favorable here.'
-  if (l.includes('risk') || l.includes('portfolio'))
-    return 'Portfolio risk score: 6.2/10 (moderate). Total exposure: $2,063 margin across 3 positions. Max drawdown today: -2.1%. Suggestion: Your BTC position is well-placed, but ETH long has negative R:R. Consider reducing ETH exposure.'
-  if (l.includes('strat'))
-    return 'Current market favors momentum on 4H. RSI crossover + volume breakout strategy has shown 68% win rate in recent backtests. For your risk profile, I\'d suggest:\n\n1. Scale into winners (BTC, SOL)\n2. Cut losers fast (ETH if < $3,300)\n3. Keep position sizing < 2% per trade'
-  return 'I can help with:\n• **Market analysis** — "How is BTC doing?"\n• **Risk assessment** — "What\'s my portfolio risk?"\n• **Strategy advice** — "What strategy should I use?"\n• **Position management** — "Should I close my ETH?"\n\nWhat would you like to explore?'
 }

@@ -7,12 +7,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/clawtrade/clawtrade/internal/config"
 	"github.com/clawtrade/clawtrade/internal/engine"
 )
 
 func TestHealthEndpoint(t *testing.T) {
 	bus := engine.NewEventBus()
-	srv := NewServer(bus, nil, nil, nil)
+	cfg, _ := config.Load("")
+	srv := NewServer(cfg, bus, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/system/health", nil)
 	w := httptest.NewRecorder()

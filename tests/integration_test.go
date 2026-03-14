@@ -12,6 +12,7 @@ import (
 	"github.com/clawtrade/clawtrade/internal/adapter"
 	"github.com/clawtrade/clawtrade/internal/adapter/simulation"
 	"github.com/clawtrade/clawtrade/internal/api"
+	"github.com/clawtrade/clawtrade/internal/config"
 	"github.com/clawtrade/clawtrade/internal/database"
 	"github.com/clawtrade/clawtrade/internal/engine"
 	"github.com/clawtrade/clawtrade/internal/memory"
@@ -39,7 +40,8 @@ func TestFullStack_Integration(t *testing.T) {
 		"test-exchange": simAdapter,
 	}
 
-	srv := api.NewServer(bus, memStore, auditLog, adapters)
+	cfg, _ := config.Load("")
+	srv := api.NewServer(cfg, bus, memStore, auditLog, adapters)
 
 	// Test 1: Health endpoint
 	t.Run("HealthEndpoint", func(t *testing.T) {
