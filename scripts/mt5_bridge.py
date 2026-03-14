@@ -11,13 +11,21 @@ Usage:
 import sys
 import json
 import argparse
+import subprocess
 from datetime import datetime
 
 try:
     import MetaTrader5 as mt5
 except ImportError:
-    print(json.dumps({"error": "MetaTrader5 package not installed. Run: pip install MetaTrader5"}), flush=True)
-    sys.exit(1)
+    # Auto-install MetaTrader5 package
+    print(json.dumps({"id": "auto_install", "result": {"status": "installing MetaTrader5 package..."}}), flush=True)
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "MetaTrader5", "-q"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        import MetaTrader5 as mt5
+    except Exception as e:
+        print(json.dumps({"error": f"Failed to install MetaTrader5: {e}"}), flush=True)
+        sys.exit(1)
 
 # Timeframe mapping
 TIMEFRAMES = {

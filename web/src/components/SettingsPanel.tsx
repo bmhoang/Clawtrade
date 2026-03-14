@@ -255,10 +255,9 @@ function MT5Form({ fields, onChange }: { fields: Record<string, string>; onChang
         background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.15)',
       }}>
         <p style={{ fontSize: 11, color: 'var(--text-2)', margin: 0, lineHeight: 1.6 }}>
-          <span style={{ fontWeight: 600, color: '#818cf8' }}>Prerequisites:</span>{' '}
-          Install <a href="https://www.metatrader5.com/en/download" target="_blank" rel="noreferrer" style={{ color: '#818cf8', textDecoration: 'underline' }}>MetaTrader 5</a> on your machine (Windows only), then run{' '}
-          <code style={{ background: 'var(--bg-0)', padding: '2px 6px', borderRadius: 4, fontSize: 10 }}>pip install MetaTrader5</code>.
-          Clawtrade will automatically launch and connect to MT5 — no need to open it manually.
+          <span style={{ fontWeight: 600, color: '#818cf8' }}>Prerequisite:</span>{' '}
+          Install <a href="https://www.metatrader5.com/en/download" target="_blank" rel="noreferrer" style={{ color: '#818cf8', textDecoration: 'underline' }}>MetaTrader 5</a> terminal on your machine (Windows only).
+          Clawtrade will auto-install the Python bridge and connect — no need to open MT5 manually.
         </p>
       </div>
       <FormRow>
