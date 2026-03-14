@@ -3,6 +3,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -40,7 +41,7 @@ func (s *Server) SetAgentManager(mgr *subagent.AgentManager) {
 	s.agentMgr = mgr
 }
 
-func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audit *security.AuditLog, adapters map[string]adapter.TradingAdapter, riskEngine *risk.Engine) *Server {
+func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audit *security.AuditLog, adapters map[string]adapter.TradingAdapter, riskEngine *risk.Engine, db *sql.DB) *Server {
 	s := &Server{
 		cfg:      cfg,
 		bus:      bus,
@@ -59,7 +60,7 @@ func NewServer(cfg *config.Config, bus *engine.EventBus, mem *memory.Store, audi
 		AllowedHeaders: []string{"Content-Type", "Authorization"},
 	}))
 
-	ag := agent.New(cfg, adapters, riskEngine, mem, bus)
+	ag := agent.New(cfg, adapters, riskEngine, mem, bus, db)
 
 	// Connect external MCP servers to agent
 	if len(cfg.MCP.Servers) > 0 {

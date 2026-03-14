@@ -4,6 +4,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -51,10 +52,10 @@ type Agent struct {
 }
 
 // New creates a new AI trading agent.
-func New(cfg *config.Config, adapters map[string]adapter.TradingAdapter, riskEngine *risk.Engine, mem *memory.Store, bus *engine.EventBus) *Agent {
+func New(cfg *config.Config, adapters map[string]adapter.TradingAdapter, riskEngine *risk.Engine, mem *memory.Store, bus *engine.EventBus, db *sql.DB) *Agent {
 	return &Agent{
 		cfg:     cfg,
-		tools:   NewToolRegistry(adapters, riskEngine, bus),
+		tools:   NewToolRegistry(adapters, riskEngine, bus, db),
 		context: NewContextBuilder(cfg, adapters, riskEngine, mem),
 		memory:  mem,
 	}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/clawtrade/clawtrade/internal/adapter/bybit"
 	"github.com/clawtrade/clawtrade/internal/agent"
 	"github.com/clawtrade/clawtrade/internal/api"
+	"github.com/clawtrade/clawtrade/internal/backtest"
 	"github.com/clawtrade/clawtrade/internal/config"
 	"github.com/clawtrade/clawtrade/internal/database"
 	"github.com/clawtrade/clawtrade/internal/engine"
@@ -99,6 +101,8 @@ func main() {
 		err = handleNotify(os.Args[2:])
 	case "status":
 		err = handleStatus()
+	case "backtest":
+		err = handleBacktest(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -155,6 +159,9 @@ Notifications:
   telegram show          Show Telegram config
   notify show            Show all notification settings
   notify set K V         Set notification config
+
+Backtesting:
+  backtest               Run a backtest (use --help for options)
 
 Environment:
   CLAWTRADE_CONFIG       Config file path (default: config/default.yaml)
@@ -345,7 +352,7 @@ func serve() error {
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
-	srv := api.NewServer(cfg, bus, memStore, auditLog, adapters, riskEngine)
+	srv := api.NewServer(cfg, bus, memStore, auditLog, adapters, riskEngine, db)
 	srv.SetAgentManager(agentMgr)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2155,4 +2162,217 @@ func httpPost(url, jsonPayload string) (bool, error) {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode == 200, nil
+}
+
+// ─── backtest ─────────────────────────────────────────────────────────
+
+func handleBacktest(args []string) error {
+	fs := flag.NewFlagSet("backtest", flag.ContinueOnError)
+	symbol := fs.String("symbol", "BTC/USDT", "Trading pair (e.g. BTC/USDT)")
+	timeframe := fs.String("timeframe", "1d", "Candle timeframe (1m, 5m, 1h, 4h, 1d)")
+	fromStr := fs.String("from", time.Now().AddDate(0, 0, -90).Format("2006-01-02"), "Start date (YYYY-MM-DD)")
+	toStr := fs.String("to", time.Now().Format("2006-01-02"), "End date (YYYY-MM-DD)")
+	strategyName := fs.String("strategy", "momentum", "Strategy name: momentum, meanrevert, macd_cross")
+	configFile := fs.String("config", "", "YAML rule file path (buy_when/sell_when)")
+	capital := fs.Float64("capital", 10000, "Initial capital in USD")
+	help := fs.Bool("help", false, "Show backtest help")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if *help {
+		fmt.Println("Usage: clawtrade backtest [options]")
+		fmt.Println()
+		fs.PrintDefaults()
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  clawtrade backtest --symbol ETH/USDT --timeframe 4h --from 2025-06-01")
+		fmt.Println("  clawtrade backtest --strategy macd_cross --capital 50000")
+		fmt.Println("  clawtrade backtest --config strategies/my_rules.yaml")
+		return nil
+	}
+
+	from, err := time.Parse("2006-01-02", *fromStr)
+	if err != nil {
+		return fmt.Errorf("invalid --from date: %w", err)
+	}
+	to, err := time.Parse("2006-01-02", *toStr)
+	if err != nil {
+		return fmt.Errorf("invalid --to date: %w", err)
+	}
+
+	// Load config for exchange credentials
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		fmt.Printf("Warning: Could not load config from %s, using defaults\n", configPath)
+		cfg, _ = config.Load("")
+	}
+
+	// Open DB for candle cache
+	dataDir := filepath.Dir(cfg.Database.Path)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return fmt.Errorf("create data dir: %w", err)
+	}
+	db, err := database.Open(cfg.Database.Path)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer db.Close()
+
+	// Find first connected adapter (try binance, then bybit)
+	var adp adapter.TradingAdapter
+	for _, name := range []string{"binance", "bybit"} {
+		for _, ex := range cfg.Exchanges {
+			if ex.Name == name && ex.Enabled {
+				switch name {
+				case "binance":
+					ba := binance.New(ex.Fields["api_key"], ex.Fields["api_secret"])
+					if ex.Fields["environment"] == "testnet" {
+						ba.SetTestnet(true)
+					}
+					adp = ba
+				case "bybit":
+					ba := bybit.New(ex.Fields["api_key"], ex.Fields["api_secret"])
+					if ex.Fields["environment"] == "testnet" {
+						ba.SetTestnet(true)
+					}
+					adp = ba
+				}
+				break
+			}
+		}
+		if adp != nil {
+			break
+		}
+	}
+
+	// Create DataLoader and load candles
+	loader := backtest.NewDataLoader(db, adp)
+	ctx := context.Background()
+
+	fmt.Printf("Loading candles for %s (%s) from %s to %s...\n", *symbol, *timeframe, *fromStr, *toStr)
+	candles, err := loader.LoadCandles(ctx, *symbol, *timeframe, from, to)
+	if err != nil {
+		return fmt.Errorf("load candles: %w", err)
+	}
+	if len(candles) == 0 {
+		return fmt.Errorf("no candle data available for %s. Ensure an exchange is configured or cache has data", *symbol)
+	}
+	fmt.Printf("Loaded %d candles\n", len(candles))
+
+	// Build strategy
+	var strat backtest.StrategyRunner
+	if *configFile != "" {
+		// Read YAML rule file and parse buy_when/sell_when
+		data, err := os.ReadFile(*configFile)
+		if err != nil {
+			return fmt.Errorf("read config file: %w", err)
+		}
+		var buyWhen, sellWhen string
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "buy_when:") {
+				buyWhen = strings.TrimSpace(strings.TrimPrefix(line, "buy_when:"))
+				buyWhen = strings.Trim(buyWhen, "\"'")
+			} else if strings.HasPrefix(line, "sell_when:") {
+				sellWhen = strings.TrimSpace(strings.TrimPrefix(line, "sell_when:"))
+				sellWhen = strings.Trim(sellWhen, "\"'")
+			}
+		}
+		if buyWhen == "" && sellWhen == "" {
+			return fmt.Errorf("config file must contain buy_when and/or sell_when rules")
+		}
+		strat = &backtest.ConfigStrategy{BuyWhen: buyWhen, SellWhen: sellWhen}
+		fmt.Printf("Strategy: custom rules from %s\n", *configFile)
+	} else {
+		strat = backtest.GetBuiltinStrategy(*strategyName)
+		fmt.Printf("Strategy: %s\n", *strategyName)
+	}
+
+	// Determine trade size based on capital and first candle price
+	tradeSize := 0.0
+	if len(candles) > 0 && candles[0].Close > 0 {
+		// Use 10% of capital per trade
+		tradeSize = (*capital * 0.10) / candles[0].Close
+	}
+
+	// Create Engine with EventBus and run backtest
+	bus := engine.NewEventBus()
+	eng := &backtest.Engine{Bus: bus}
+
+	btCfg := backtest.BacktestConfig{
+		Symbol:    *symbol,
+		Timeframe: *timeframe,
+		From:      from,
+		To:        to,
+		Capital:   *capital,
+		MakerFee:  0.001,
+		TakerFee:  0.001,
+		Slippage:  0.0005,
+		TradeSize: tradeSize,
+	}
+
+	fmt.Println("Running backtest...")
+	result, err := eng.Run(ctx, btCfg, candles, strat)
+	if err != nil {
+		return fmt.Errorf("backtest failed: %w", err)
+	}
+
+	printBacktestResult(result)
+	return nil
+}
+
+func printBacktestResult(r *backtest.BacktestResult) {
+	pnlSign := "+"
+	if r.TotalPnL < 0 {
+		pnlSign = ""
+	}
+	returnSign := "+"
+	if r.TotalReturn < 0 {
+		returnSign = ""
+	}
+
+	fmt.Println()
+	fmt.Println("═══════════════════════════════════════════════════")
+	fmt.Printf("  Backtest Results: %s (%s)\n", r.Symbol, r.Period)
+	fmt.Println("═══════════════════════════════════════════════════")
+	fmt.Printf("  Strategy:       %s\n", r.Timeframe)
+	fmt.Printf("  Capital:        $%.2f\n", r.Capital)
+	fmt.Printf("  Final Equity:   $%.2f\n", r.FinalEquity)
+	fmt.Printf("  Total P&L:      %s$%.2f (%s%.2f%%)\n", pnlSign, r.TotalPnL, returnSign, r.TotalReturn)
+	fmt.Println("───────────────────────────────────────────────────")
+	fmt.Printf("  Total Trades:   %d\n", r.TotalTrades)
+	fmt.Printf("  Wins / Losses:  %d / %d\n", r.WinCount, r.LossCount)
+	fmt.Printf("  Win Rate:       %.1f%%\n", r.WinRate*100)
+	fmt.Printf("  Avg Win:        $%.2f\n", r.AvgWin)
+	fmt.Printf("  Avg Loss:       $%.2f\n", r.AvgLoss)
+	fmt.Printf("  Profit Factor:  %.2f\n", r.ProfitFactor)
+	fmt.Printf("  Max Drawdown:   %.2f%%\n", r.MaxDrawdown*100)
+	fmt.Printf("  Sharpe Ratio:   %.2f\n", r.SharpeRatio)
+	fmt.Println("═══════════════════════════════════════════════════")
+
+	// Print recent trades (last 10)
+	if len(r.Trades) > 0 {
+		fmt.Println("  Recent Trades:")
+		start := 0
+		if len(r.Trades) > 10 {
+			start = len(r.Trades) - 10
+		}
+		for _, t := range r.Trades[start:] {
+			pnlStr := fmt.Sprintf("+$%.2f", t.PnL)
+			if t.PnL < 0 {
+				pnlStr = fmt.Sprintf("-$%.2f", -t.PnL)
+			}
+			fmt.Printf("    %s  %-5s %8.4f @ %.2f → %.2f  %s\n",
+				t.ClosedAt.Format("01-02 15:04"),
+				strings.ToUpper(t.Side),
+				t.Size,
+				t.EntryPrice,
+				t.ExitPrice,
+				pnlStr,
+			)
+		}
+		fmt.Println("═══════════════════════════════════════════════════")
+	}
 }

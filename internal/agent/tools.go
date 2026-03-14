@@ -3,13 +3,16 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/clawtrade/clawtrade/internal/adapter"
+	"github.com/clawtrade/clawtrade/internal/backtest"
 	"github.com/clawtrade/clawtrade/internal/engine"
 	"github.com/clawtrade/clawtrade/internal/risk"
 )
@@ -51,14 +54,16 @@ type ToolRegistry struct {
 	riskEngine *risk.Engine
 	mcpBridge  MCPBridge
 	bus        *engine.EventBus
+	db         *sql.DB
 }
 
 // NewToolRegistry creates a registry with access to exchange adapters and risk engine.
-func NewToolRegistry(adapters map[string]adapter.TradingAdapter, riskEngine *risk.Engine, bus *engine.EventBus) *ToolRegistry {
+func NewToolRegistry(adapters map[string]adapter.TradingAdapter, riskEngine *risk.Engine, bus *engine.EventBus, db *sql.DB) *ToolRegistry {
 	return &ToolRegistry{
 		adapters:   adapters,
 		riskEngine: riskEngine,
 		bus:        bus,
+		db:         db,
 	}
 }
 
@@ -196,6 +201,22 @@ func (tr *ToolRegistry) Definitions() []ToolDef {
 				},
 			},
 		},
+		{
+			Name:        "backtest",
+			Description: "Run a backtest on historical data to evaluate a trading strategy. Returns performance metrics including P&L, win rate, Sharpe ratio, and max drawdown.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"symbol":    map[string]any{"type": "string", "description": "Trading pair, e.g. BTC/USDT"},
+					"timeframe": map[string]any{"type": "string", "description": "Candle timeframe: 1h, 4h, 1d", "default": "1d"},
+					"days":      map[string]any{"type": "integer", "description": "Number of days to backtest (default: 90)", "default": 90},
+					"strategy":  map[string]any{"type": "string", "description": "Strategy: momentum, meanrevert, macd_cross", "default": "momentum"},
+					"capital":   map[string]any{"type": "number", "description": "Initial capital USD (default: 10000)", "default": 10000},
+					"exchange":  map[string]any{"type": "string", "description": "Exchange for data", "default": "binance"},
+				},
+				"required": []string{"symbol"},
+			},
+		},
 	}
 
 	// Append MCP tools from external servers
@@ -217,7 +238,7 @@ var builtinTools = map[string]bool{
 	"get_price": true, "get_candles": true, "analyze_market": true,
 	"get_balances": true, "get_positions": true, "risk_check": true,
 	"calculate_position_size": true, "place_order": true,
-	"cancel_order": true, "get_open_orders": true,
+	"cancel_order": true, "get_open_orders": true, "backtest": true,
 }
 
 // Execute runs a tool and returns the result.
@@ -243,6 +264,8 @@ func (tr *ToolRegistry) Execute(ctx context.Context, call ToolCall) ToolResult {
 		return tr.execCancelOrder(ctx, call)
 	case "get_open_orders":
 		return tr.execGetOpenOrders(ctx, call)
+	case "backtest":
+		return tr.execBacktest(ctx, call)
 	default:
 		// Try MCP bridge for external tools
 		if tr.mcpBridge != nil {
@@ -581,6 +604,143 @@ func (tr *ToolRegistry) execGetOpenOrders(ctx context.Context, call ToolCall) To
 	}
 	data, _ := json.Marshal(orders)
 	return ToolResult{ID: call.ID, Content: string(data)}
+}
+
+func (tr *ToolRegistry) execBacktest(ctx context.Context, call ToolCall) ToolResult {
+	symbol := getString(call.Input, "symbol", "")
+	if symbol == "" {
+		return ToolResult{ID: call.ID, Content: "symbol is required", IsError: true}
+	}
+
+	timeframe := getString(call.Input, "timeframe", "1d")
+	days := getInt(call.Input, "days", 90)
+	strategyName := getString(call.Input, "strategy", "momentum")
+	capital := getFloat(call.Input, "capital", 10000)
+	exchange := getString(call.Input, "exchange", "binance")
+
+	if tr.db == nil {
+		return ToolResult{ID: call.ID, Content: "database not available for backtest", IsError: true}
+	}
+
+	// Get adapter for data
+	adp, _ := tr.adapters[exchange]
+	// adp can be nil — DataLoader will work in cache-only mode
+
+	// Set up date range
+	to := time.Now().UTC().Truncate(24 * time.Hour)
+	from := to.AddDate(0, 0, -days)
+
+	// Create DataLoader and load candles
+	loader := backtest.NewDataLoader(tr.db, adp)
+	candles, err := loader.LoadCandles(ctx, symbol, timeframe, from, to)
+	if err != nil {
+		return ToolResult{ID: call.ID, Content: fmt.Sprintf("failed to load candles: %v", err), IsError: true}
+	}
+	if len(candles) == 0 {
+		return ToolResult{ID: call.ID, Content: fmt.Sprintf("no candle data available for %s", symbol), IsError: true}
+	}
+
+	// Build strategy
+	var strat backtest.StrategyRunner
+	if strings.Contains(strategyName, "<") || strings.Contains(strategyName, ">") {
+		// Treat as custom ConfigStrategy rule expression
+		strat = &backtest.ConfigStrategy{BuyWhen: strategyName, SellWhen: ""}
+	} else {
+		strat = backtest.GetBuiltinStrategy(strategyName)
+	}
+
+	// Determine trade size (10% of capital)
+	tradeSize := 0.0
+	if candles[0].Close > 0 {
+		tradeSize = (capital * 0.10) / candles[0].Close
+	}
+
+	// Run backtest
+	eng := &backtest.Engine{Bus: tr.bus}
+	btCfg := backtest.BacktestConfig{
+		Symbol:    symbol,
+		Timeframe: timeframe,
+		From:      from,
+		To:        to,
+		Capital:   capital,
+		MakerFee:  0.001,
+		TakerFee:  0.001,
+		Slippage:  0.0005,
+		TradeSize: tradeSize,
+	}
+
+	result, err := eng.Run(ctx, btCfg, candles, strat)
+	if err != nil {
+		return ToolResult{ID: call.ID, Content: fmt.Sprintf("backtest failed: %v", err), IsError: true}
+	}
+
+	// Format readable text summary
+	pnlSign := "+"
+	if result.TotalPnL < 0 {
+		pnlSign = ""
+	}
+	returnSign := "+"
+	if result.TotalReturn < 0 {
+		returnSign = ""
+	}
+
+	summary := fmt.Sprintf(`Backtest Results: %s (%s)
+Strategy: %s | Capital: $%.2f
+
+Final Equity: $%.2f | P&L: %s$%.2f (%s%.2f%%)
+Trades: %d (W:%d L:%d) | Win Rate: %.1f%%
+Avg Win: $%.2f | Avg Loss: $%.2f
+Profit Factor: %.2f | Max Drawdown: %.2f%%
+Sharpe Ratio: %.2f`,
+		result.Symbol, result.Period,
+		strategyName, result.Capital,
+		result.FinalEquity, pnlSign, result.TotalPnL, returnSign, result.TotalReturn,
+		result.TotalTrades, result.WinCount, result.LossCount, result.WinRate*100,
+		result.AvgWin, result.AvgLoss,
+		result.ProfitFactor, result.MaxDrawdown*100,
+		result.SharpeRatio,
+	)
+
+	// Append recent trades
+	if len(result.Trades) > 0 {
+		summary += "\n\nRecent Trades:"
+		start := 0
+		if len(result.Trades) > 5 {
+			start = len(result.Trades) - 5
+		}
+		for _, t := range result.Trades[start:] {
+			tPnl := fmt.Sprintf("+$%.2f", t.PnL)
+			if t.PnL < 0 {
+				tPnl = fmt.Sprintf("-$%.2f", -t.PnL)
+			}
+			summary += fmt.Sprintf("\n  %s %s %.4f @ %.2f -> %.2f %s",
+				t.ClosedAt.Format("01-02"), strings.ToUpper(t.Side), t.Size, t.EntryPrice, t.ExitPrice, tPnl)
+		}
+	}
+
+	// Append JSON for structured consumption
+	jsonResult := map[string]any{
+		"symbol":        result.Symbol,
+		"timeframe":     result.Timeframe,
+		"period":        result.Period,
+		"capital":       result.Capital,
+		"final_equity":  round(result.FinalEquity, 2),
+		"total_pnl":     round(result.TotalPnL, 2),
+		"total_return":  round(result.TotalReturn, 2),
+		"total_trades":  result.TotalTrades,
+		"win_count":     result.WinCount,
+		"loss_count":    result.LossCount,
+		"win_rate":      round(result.WinRate*100, 1),
+		"avg_win":       round(result.AvgWin, 2),
+		"avg_loss":      round(result.AvgLoss, 2),
+		"profit_factor": round(result.ProfitFactor, 2),
+		"max_drawdown":  round(result.MaxDrawdown*100, 2),
+		"sharpe_ratio":  round(result.SharpeRatio, 2),
+	}
+	jsonBytes, _ := json.Marshal(jsonResult)
+	summary += "\n\n" + string(jsonBytes)
+
+	return ToolResult{ID: call.ID, Content: summary}
 }
 
 // ─── Technical Analysis Helpers ──────────────────────────────────────

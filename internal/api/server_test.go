@@ -14,7 +14,7 @@ import (
 func TestHealthEndpoint(t *testing.T) {
 	bus := engine.NewEventBus()
 	cfg, _ := config.Load("")
-	srv := NewServer(cfg, bus, nil, nil, nil, nil)
+	srv := NewServer(cfg, bus, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/system/health", nil)
 	w := httptest.NewRecorder()
